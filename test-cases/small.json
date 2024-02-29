@@ -1,0 +1,10 @@
+{
+  "input_matrix": [
+    ["3", "-2"],
+    ["5", "1"]
+  ],
+  "expression_rhs": ["-6", "3"],
+  "max_iterations": 64,
+  "epsilon": "0.001"
+}
+
