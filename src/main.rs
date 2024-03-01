@@ -16,33 +16,32 @@ fn pad_string(displayable: impl Display, padding: usize) -> String {
         .unwrap_or_default()
 }
 
-fn get_usage_information() -> &'static str {
-    r#"solver <file-path>
+const USAGE_INFORMATION: &str = r#"solver <file-path>
 solver < file-path
 
 <file-path> is any valid path to a file
-    "#
-}
+"#;
 
 fn main() {
     let config = build_configuration();
-    if let Err(err) = config {
-        if let NonInteractiveError::NoInputProvided = err {
-            eprintln!("{}", pad_string(get_usage_information(), 2));
-            return;
-        }
-        eprintln!("Error occured:");
-        eprintln!("{}", pad_string(err, 2));
-        return;
-    }
+    match config {
+        Err(err) => {
+            let error_string: &dyn Display = if err.is_no_input_provided() {
+                &USAGE_INFORMATION
+            } else {
+                eprintln!("Error occured:");
+                &err
+            };
 
-    let solution = config.unwrap().solve();
-    match solution {
-        Ok(result) => println!("Solution: {}", result),
-        Err(error) => match error {
-            ESolveError::Diverge => {
-                eprintln!("Solution approximation diverges. Equesions do not have solution")
-            }
+            eprintln!("{}", pad_string(error_string, 2));
+        }
+        Ok(config) => match config.solve() {
+            Ok(result) => println!("Solution: {}", result),
+            Err(error) => match error {
+                ESolveError::Diverge => {
+                    eprintln!("Solution approximation diverges. Equesions do not have solution")
+                }
+            },
         },
     }
 }

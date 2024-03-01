@@ -6,9 +6,9 @@ use rust_decimal_macros::dec;
 use serde::Deserialize;
 use serde_json as json;
 use std::fmt::Debug;
+use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::iter::Iterator;
-use std::{fs::File, path::Path};
 
 use crate::solver::Equation;
 
@@ -23,8 +23,7 @@ fn build_decimal_from_string(input: &String) -> Result<Decimal, rust_decimal::Er
 pub fn build_configuration() -> Result<Equation, NonInteractiveError> {
     // try non interactive
     let parsed = try_non_interactive()?;
-    let matrix_size = compute_matrix_size(&parsed.input_matrix, &parsed.expression_rhs)
-        .map_err(|err| NonInteractiveError::MatrixSizeError(err))?;
+    let matrix_size = compute_matrix_size(&parsed.input_matrix, &parsed.expression_rhs)?;
 
     let input_matrix: Result<Vec<_>, _> = parsed
         .input_matrix
@@ -40,7 +39,7 @@ pub fn build_configuration() -> Result<Equation, NonInteractiveError> {
         })
         .collect();
 
-    let input_matrix = input_matrix.map_err(|err| NonInteractiveError::MatrixInputError(err))?;
+    let input_matrix = input_matrix?;
     let matrix = DMatrix::from_row_iterator(matrix_size, matrix_size, input_matrix);
     check_for_zeroes_on_diagonal((&matrix, matrix_size))
         .map_err(|err| NonInteractiveError::MatrixInputError(err))?;
@@ -61,7 +60,7 @@ pub fn build_configuration() -> Result<Equation, NonInteractiveError> {
         input_matrix: matrix,
         expression_rhs,
         max_iterations: parsed.max_iterations,
-        epsilon: Decimal::from_str(parsed.epsilon.as_str()).expect(DECIMAL_PARSE_ERROR_MESSAGE),
+        epsilon: Decimal::from_str(&parsed.epsilon).expect(DECIMAL_PARSE_ERROR_MESSAGE),
     })
 }
 
@@ -92,6 +91,7 @@ fn compute_matrix_size(
         .clone()
         .max()
         .ok_or(MatrixSizeError::EmptyMatrix)?;
+
     if let Some(incorrect_row) = row_sizes
         .clone()
         .enumerate()
@@ -177,6 +177,40 @@ pub enum NonInteractiveError {
     IOError(io::Error),
 }
 
+impl From<MatrixSizeError> for NonInteractiveError {
+    fn from(v: MatrixSizeError) -> Self {
+        Self::MatrixSizeError(v)
+    }
+}
+
+impl From<PositionalError> for NonInteractiveError {
+    fn from(v: PositionalError) -> Self {
+        Self::MatrixInputError(v)
+    }
+}
+
+impl From<serde_json::Error> for NonInteractiveError {
+    fn from(v: serde_json::Error) -> Self {
+        Self::ParseError(v)
+    }
+}
+
+impl NonInteractiveError {
+    /// Returns `true` if the non interactive error is [`NoInputProvided`].
+    ///
+    /// [`NoInputProvided`]: NonInteractiveError::NoInputProvided
+    #[must_use]
+    pub fn is_no_input_provided(&self) -> bool {
+        matches!(self, Self::NoInputProvided)
+    }
+}
+
+impl From<io::Error> for NonInteractiveError {
+    fn from(value: io::Error) -> Self {
+        NonInteractiveError::IOError(value)
+    }
+}
+
 impl fmt::Display for NonInteractiveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -208,15 +242,40 @@ impl fmt::Display for NonInteractiveError {
     }
 }
 
-fn try_non_interactive() -> Result<EquesionInput, NonInteractiveError> {
-    let content = try_file_path()
-        .or_else(try_stdin)
-        .map_or(Err(NonInteractiveError::NoInputProvided), |value| {
-            value.map_err(|err| NonInteractiveError::IOError(err))
-        })?;
+enum InputMethod {
+    Argument(String),
+    Stdin,
+    None,
+}
 
-    json::from_str::<EquesionInput>(content.as_str())
-        .map_err(|err| NonInteractiveError::ParseError(err))
+impl From<Option<&str>> for InputMethod {
+    fn from(value: Option<&str>) -> Self {
+        value.map_or(InputMethod::None, |v| InputMethod::Argument(v.to_owned()))
+    }
+}
+
+fn try_non_interactive() -> Result<EquesionInput, NonInteractiveError> {
+    let content = match determine_input_method() {
+        InputMethod::Argument(filepath) => fs::read_to_string(filepath),
+        InputMethod::Stdin => read_from_stdin(),
+        InputMethod::None => return Err(NonInteractiveError::NoInputProvided),
+    }?;
+
+    json::from_str::<EquesionInput>(&content).map_err(|err| err.into())
+}
+
+fn determine_input_method() -> InputMethod {
+    let arguments: Vec<String> = std::env::args().collect();
+
+    if let Some(filepath) = arguments.get(1) {
+        return InputMethod::Argument(filepath.clone());
+    }
+
+    if !io::stdin().lock().is_terminal() {
+        return InputMethod::Stdin;
+    }
+
+    return InputMethod::None;
 }
 
 #[derive(Deserialize, Debug)]
@@ -227,23 +286,7 @@ struct EquesionInput {
     pub epsilon: String,
 }
 
-fn try_stdin() -> Option<Result<String, io::Error>> {
-    if io::stdin().lock().is_terminal() {
-        return None;
-    }
-
+fn read_from_stdin() -> Result<String, io::Error> {
     let mut content = String::new();
-
-    Some(io::stdin().read_to_string(&mut content).map(|_| content))
-}
-
-fn try_file_path() -> Option<Result<String, io::Error>> {
-    let arguments: Vec<String> = std::env::args().collect();
-    let path = Path::new(arguments.get(1)?);
-    let mut file = match File::open(path) {
-        Ok(file) => file,
-        Err(e) => return Some(Err(e)),
-    };
-    let mut content = String::new();
-    Some(file.read_to_string(&mut content).map(|_| content))
+    io::stdin().read_to_string(&mut content).map(|_| content)
 }
