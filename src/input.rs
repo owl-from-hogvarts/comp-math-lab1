@@ -86,20 +86,17 @@ fn compute_matrix_size(
     input_matrix: &Vec<Vec<String>>,
     expression_rhs: &Vec<String>,
 ) -> Result<usize, MatrixSizeError> {
-    let row_sizes = input_matrix.into_iter().map(|row| row.len());
-    let matrix_size = row_sizes
-        .clone()
-        .max()
-        .ok_or(MatrixSizeError::EmptyMatrix)?;
+    let row_sizes: Vec<_> = input_matrix.into_iter().map(|row| row.len()).collect();
+    let matrix_size = *row_sizes.iter().max().ok_or(MatrixSizeError::EmptyMatrix)?;
 
     if let Some(incorrect_row) = row_sizes
-        .clone()
+        .iter()
         .enumerate()
-        .find(|row_size| row_size.1 != matrix_size)
+        .find(|row_size| *row_size.1 != matrix_size)
     {
         return Err(MatrixSizeError::WrongRowSize(
             WrongSize {
-                actual: incorrect_row.1,
+                actual: *incorrect_row.1,
                 expected: matrix_size,
             },
             // convert index to position
